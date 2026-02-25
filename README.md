@@ -2,8 +2,6 @@
 
 ![.NET](https://img.shields.io/badge/.NET-8.0-purple)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
-![License](https://img.shields.io/github/license/giacomo1215/site2llms)
-![Repo Size](https://img.shields.io/github/repo-size/giacomo1215/site2llms)
 ![Issues](https://img.shields.io/github/issues/giacomo1215/site2llms)
 ![Stars](https://img.shields.io/github/stars/giacomo1215/site2llms?style=social)
 

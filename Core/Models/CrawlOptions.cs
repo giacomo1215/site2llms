@@ -11,6 +11,7 @@ namespace site2llms.Core.Models;
 /// <param name="OllamaBaseUrl">Base URL of the Ollama API endpoint.</param>
 /// <param name="OllamaModel">Model identifier to request from Ollama.</param>
 /// <param name="CookieFilePath">Optional path to a Netscape/JSON cookie file for authenticated fetching.</param>
+/// <param name="DryRun">When true, the pipeline discovers URLs but skips fetching, summarisation and output.</param>
 public record CrawlOptions(
     string RootUrl,
     int MaxPages,
@@ -19,5 +20,6 @@ public record CrawlOptions(
     int DelayMs,
     string OllamaBaseUrl,
     string OllamaModel,
-    string? CookieFilePath = null
+    string? CookieFilePath = null,
+    bool DryRun = false
 );

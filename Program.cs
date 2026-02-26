@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using site2llms.Core.Models;
 using site2llms.Core.Pipeline;
 using site2llms.Core.Services.Discovery;
 using site2llms.Core.Services.Extraction;
@@ -8,9 +7,8 @@ using site2llms.Core.Services.Output;
 using site2llms.Core.Services.Summarization;
 using site2llms.Core.Services.WordPress;
 using site2llms.Core.Utils;
-using System.Net;
 
-// ── Bootstrap ──────────────────────────────────────────────────────────────────
+// Bootstrap and composition root for the site2llms application.
 using var loggerFactory = LoggerFactory.Create(builder =>
 {
 	builder.AddSimpleConsole(options =>
@@ -22,46 +20,34 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 });
 
 var logger = loggerFactory.CreateLogger("site2llms");
-Console.WriteLine("                                                                                             ");
-Console.WriteLine("                                               .-''-.    .---..---.                          ");
-Console.WriteLine("           .--.               __.....__      .' .-.  )   |   ||   | __  __   ___             ");
-Console.WriteLine("           |__|           .-''         '.   / .'  / /    |   ||   ||  |/  `.'   `.          ");
-Console.WriteLine("           .--.     .|   /     .-''\"'-.  `.(_/   / /     |   ||   ||   .-.  .-.   '         ");
-Console.WriteLine("           |  |   .' |_ /     /________\\   \\    / /      |   ||   ||  |  |  |  |  |         ");
-Console.WriteLine("       _   |  | .'     ||                  |   / /       |   ||   ||  |  |  |  |  |     _   ");
-Console.WriteLine("     .' |  |  |'--.  .-'\\    .-------------'  . '        |   ||   ||  |  |  |  |  |   .' |  ");
-Console.WriteLine("    .   | /|  |   |  |   \\    '-.____...---. / /    _.-')|   ||   ||  |  |  |  |  |  .   | /");
-Console.WriteLine("  .'.'| |//|__|   |  |    `.             .'.' '  _.'.-'' |   ||   ||__|  |__|  |__|.'.'| |//");
-Console.WriteLine(".'.'.-'  /        |  '.'    `''-...... -' /  /.-'_.'     '---''---'              .'.'.-'  / ");
-Console.WriteLine(".'   \\_.'         |   /                  /    _.'                                .'   \\_.'  ");
-Console.WriteLine("                  `'-'                  ( _.-'                                               ");
-Console.WriteLine("site2llms - Universal website summarizer");
-Console.WriteLine("Made by: Giacomo Giorgi");
-Console.WriteLine("GitHub: https://github.com/giacomo1215/site2llms");
-Console.WriteLine("                                                                                             ");
+Helpers.Greet();
 
+// Resolve options: CLI arguments first, interactive prompts as fallback.
+var options = Helpers.ResolveOptions(args);
+if (options is null)
+{
+    // --help was shown; nothing more to do.
+    return;
+}
 
-// ── Collect options ────────────────────────────────────────────────────────────
-var options = CollectOptions();
-
-// ── Cookie loading ─────────────────────────────────────────────────────────────
+// Cookie loading
 var cookieLogger = loggerFactory.CreateLogger("Cookies");
 var cookieContainer = CookieLoader.Load(options.CookieFilePath, cookieLogger);
 var cookieEntries = CookieLoader.LoadAsList(options.CookieFilePath, cookieLogger);
 
-// ── HTTP clients ───────────────────────────────────────────────────────────────
-using var webHttpClient = BuildHttpClient(cookieContainer);
-using var ollamaHttpClient = BuildHttpClient();
+// HTTP clients
+using var webHttpClient = Helpers.BuildHttpClient(cookieContainer);
+using var ollamaHttpClient = Helpers.BuildHttpClient();
 
-// ── WordPress REST client ──────────────────────────────────────────────────────
+// WordPress REST client
 var wpLogger = loggerFactory.CreateLogger<WordPressRestClient>();
 var wordPressRestClient = new WordPressRestClient(webHttpClient, wpLogger);
 
-// ── Site protection probe ──────────────────────────────────────────────────────
-var playwrightSession = await ProbeSiteProtectionAsync(
+// Site protection probe
+var playwrightSession = await Helpers.ProbeSiteProtectionAsync(
 	webHttpClient, options.RootUrl, cookieEntries, wordPressRestClient, loggerFactory);
 
-// ── Compose pipeline services ──────────────────────────────────────────────────
+// Compose pipeline services
 var discovery = new CompositeDiscovery(new IUrlDiscovery[]
 {
 	new WordPressRestDiscovery(wordPressRestClient, loggerFactory.CreateLogger<WordPressRestDiscovery>()),
@@ -69,21 +55,24 @@ var discovery = new CompositeDiscovery(new IUrlDiscovery[]
 	new CrawlDiscovery(webHttpClient)
 });
 
+// Fetcher with WordPress REST and headless fallback.
 var fetcher = new HeadlessFallbackPageFetcher(
 	new WordPressRestContentFetcher(new HttpPageFetcher(webHttpClient), wordPressRestClient),
 	new HeadlessPageFetcher(cookieEntries, playwrightSession),
 	loggerFactory.CreateLogger<HeadlessFallbackPageFetcher>());
 
+// Heuristic content extractor and Ollama summarizer.
 var extractor = new HeuristicContentExtractor();
 var summarizer = new OllamaSummarizer(ollamaHttpClient, options.OllamaBaseUrl, options.OllamaModel);
 var outputWriter = new FileOutputWriter(new LlmsTxtBuilder());
 var manifestStore = new ManifestStore();
 
+// Pipeline composition
 var pipeline = new SummarizationPipeline(
 	discovery, fetcher, extractor, summarizer, outputWriter, manifestStore,
 	loggerFactory.CreateLogger<SummarizationPipeline>());
 
-// ── Run ────────────────────────────────────────────────────────────────────────
+// Run
 try
 {
 	var runResult = await pipeline.RunAsync(options);
@@ -103,141 +92,5 @@ catch (Exception ex)
 }
 finally
 {
-	if (playwrightSession is not null)
-	{
-		await playwrightSession.DisposeAsync();
-	}
-}
-
-// ── Helper methods ─────────────────────────────────────────────────────────────
-
-static CrawlOptions CollectOptions()
-{
-	var rootUrl = PromptString("Root URL", "https://example.com");
-	var maxPages = PromptInt("Max pages", 200);
-	var maxDepth = PromptInt("Max depth for crawl fallback", 3);
-	var delayMs = PromptInt("Delay ms between requests", 250);
-	var ollamaBaseUrl = PromptString("Ollama base URL", "http://localhost:11434");
-	var ollamaModel = PromptString("Ollama model", "minimax-m2.5:cloud");
-	var cookieFile = PromptString("Cookie file (Netscape/JSON, blank to skip)", "");
-	var cookieFilePath = string.IsNullOrWhiteSpace(cookieFile) ? null : cookieFile;
-
-	if (cookieFilePath is not null && !File.Exists(cookieFilePath))
-	{
-		Console.WriteLine($"Warning: cookie file not found at '{cookieFilePath}' — proceeding without cookies.");
-		cookieFilePath = null;
-	}
-
-	if (cookieFilePath is not null)
-	{
-		Console.WriteLine($"Cookies loaded from: {cookieFilePath}");
-	}
-
-	return new CrawlOptions(
-		RootUrl: rootUrl,
-		MaxPages: maxPages,
-		MaxDepth: maxDepth,
-		SameHostOnly: true,
-		DelayMs: delayMs,
-		OllamaBaseUrl: ollamaBaseUrl,
-		OllamaModel: ollamaModel,
-		CookieFilePath: cookieFilePath
-	);
-}
-
-static async Task<PlaywrightSession?> ProbeSiteProtectionAsync(
-	HttpClient webHttpClient,
-	string rootUrl,
-	IReadOnlyList<CookieEntry> cookieEntries,
-	WordPressRestClient wordPressRestClient,
-	ILoggerFactory loggerFactory)
-{
-	var probeLogger = loggerFactory.CreateLogger("SiteProbe");
-	PlaywrightSession? session = null;
-	probeLogger.LogInformation("Probing site accessibility");
-
-	try
-	{
-		using var probeResponse = await webHttpClient.GetAsync(rootUrl);
-		var probeHtml = await probeResponse.Content.ReadAsStringAsync();
-		var challengeLabel = ChallengeDetector.Detect(probeHtml);
-
-		if (challengeLabel is not null)
-		{
-			probeLogger.LogWarning("Site protection detected: {Challenge} — launching headless browser session", challengeLabel);
-			session = new PlaywrightSession(loggerFactory.CreateLogger<PlaywrightSession>());
-			await session.WarmupAsync(rootUrl, cookieEntries);
-
-			if (session.ChallengeWasResolved)
-			{
-				wordPressRestClient.Session = session;
-				probeLogger.LogInformation("Headless session active — WP REST and page fetches will use the browser");
-			}
-			else if (session.ChallengeStillBlocked)
-			{
-				probeLogger.LogWarning("Headless browser could not solve the challenge. Tip: supply a cookie file from a real browser session");
-			}
-		}
-		else
-		{
-			probeLogger.LogInformation("No site protection detected — proceeding directly");
-		}
-	}
-	catch (Exception ex)
-	{
-		probeLogger.LogWarning("Warm-up probe failed ({Message}) — proceeding without warm-up", ex.Message);
-	}
-
-	return session;
-}
-
-// Creates a browser-like HTTP client profile to improve compatibility with real-world sites.
-static HttpClient BuildHttpClient(CookieContainer? cookies = null)
-{
-	var handler = new SocketsHttpHandler
-	{
-		AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
-		UseCookies = cookies is not null,
-		CookieContainer = cookies ?? new CookieContainer()
-	};
-
-	var client = new HttpClient(handler)
-	{
-		Timeout = TimeSpan.FromSeconds(90)
-	};
-
-	client.DefaultRequestHeaders.UserAgent.ParseAdd("site2llms/1.0 (+contact)");
-	client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36");
-	client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-	client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
-	return client;
-}
-
-// Prompts for a string value, falling back to default on empty input.
-static string PromptString(string label, string defaultValue)
-{
-	Console.Write($"{label} [{defaultValue}]: ");
-	var input = Console.ReadLine()?.Trim();
-	return string.IsNullOrWhiteSpace(input) ? defaultValue : input;
-}
-
-// Prompts for a positive integer; repeats until valid or default is accepted.
-static int PromptInt(string label, int defaultValue)
-{
-	while (true)
-	{
-		Console.Write($"{label} [{defaultValue}]: ");
-		var input = Console.ReadLine()?.Trim();
-		if (string.IsNullOrWhiteSpace(input))
-		{
-			return defaultValue;
-		}
-
-		if (int.TryParse(input, out var parsed) && parsed > 0)
-		{
-			return parsed;
-		}
-
-		Console.WriteLine("Please enter a positive number.");
-	}
+	if (playwrightSession is not null) await playwrightSession.DisposeAsync();
 }

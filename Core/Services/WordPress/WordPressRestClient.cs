@@ -26,6 +26,7 @@ public class WordPressRestClient(HttpClient httpClient, ILogger<WordPressRestCli
     /// Set this before calling <see cref="DetectAsync"/> or <see cref="DiscoverAsync"/>.
     /// </summary>
     public PlaywrightSession? Session { get; set; }
+
     /// <summary>
     /// Checks whether the target root exposes WordPress REST APIs.
     /// </summary>
@@ -46,7 +47,6 @@ public class WordPressRestClient(HttpClient httpClient, ILogger<WordPressRestCli
             {
                 continue;
             }
-
             using (response)
             {
                 if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)
@@ -60,11 +60,13 @@ public class WordPressRestClient(HttpClient httpClient, ILogger<WordPressRestCli
                     }
                     return new WordPressDetectionResult(false, challengeLabel ?? $"HTTP {(int)response.StatusCode} from {endpoint}", challengeLabel is not null);
                 }
-
+                
                 if (!response.IsSuccessStatusCode)
                 {
                     continue;
                 }
+
+                if (!response.IsSuccessStatusCode) continue;
 
                 var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
                 if (!contentType.Contains("json", StringComparison.OrdinalIgnoreCase))
@@ -500,10 +502,7 @@ public class WordPressRestClient(HttpClient httpClient, ILogger<WordPressRestCli
 }
 
 /// <summary>
-/// WP REST detection output.
-/// </summary>
-/// <summary>
-/// WP REST detection output.
+/// Result of probing a WordPress site for REST API availability and any blocking challenges.
 /// </summary>
 public sealed record WordPressDetectionResult(bool IsWordPressRestAvailable, string? Reason, bool IsBlockedByChallenge);
 

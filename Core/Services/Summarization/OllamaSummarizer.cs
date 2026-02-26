@@ -68,6 +68,7 @@ public class OllamaSummarizer(HttpClient httpClient, string baseUrl, string mode
 You are generating an AI-friendly page summary in markdown.
 Return markdown only. Do not add commentary outside markdown sections.
 Do not invent details. If unknown, write \"Not specified\".
+Please follow the structure below exactly, filling in each section based on the extracted content, making sure to translate everything to English.
 
 Required structure:
 # {pageContent.Title}

@@ -56,23 +56,133 @@ Most tools in this space either stop at SEO analysis, produce a single flat inde
 
 ## Requirements
 
-- .NET SDK 8.x
-- Running Ollama instance (local or remote)
-- Reachable model in Ollama (default: `minimax-m2.5:cloud`)
-- Playwright browsers installed (run `pwsh bin/Debug/net8.0/playwright.ps1 install chromium` after first build)
+- *Only if building from source:* .NET SDK 8.x
 
-## Quick start
+## Getting started
 
-1. Build:
+### Option 1 — Download a pre-built release (recommended)
+
+1. Go to the [Releases](https://github.com/giacomo1215/site2llms/releases) page.
+2. Download the archive for your operating system:
+
+   | OS | Asset to download |
+   |---|---|
+   | Windows x64 | `site2llms-win-x64.zip` |
+   | Linux x64 | `site2llms-linux-x64.tar.gz` |
+   | macOS x64 | `site2llms-osx-x64.tar.gz` |
+   | macOS Apple Silicon | `site2llms-osx-arm64.tar.gz` |
+
+3. Extract the archive:
+
+   **Windows (PowerShell):**
+   ```powershell
+   Expand-Archive site2llms-win-x64.zip -DestinationPath site2llms
+   ```
+
+   **Linux / macOS:**
+   ```bash
+   tar xzf site2llms-linux-x64.tar.gz
+   ```
+
+4. *(First run only)* Install the Playwright Chromium browser if you need headless fallback:
+
+   **Windows:**
+   ```powershell
+   pwsh site2llms/playwright.ps1 install chromium
+   ```
+
+   **Linux / macOS:**
+   ```bash
+   ./site2llms/playwright.sh install chromium
+   ```
+
+5. Run the tool — see [Usage](#usage) below.
+
+### Option 2 — Build from source
+
+1. Ensure you have the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) installed.
+2. Clone and build:
+ 
+   ```bash
+   git clone https://github.com/giacomo1215/site2llms.git
+   cd site2llms
+   dotnet build
+   ```
+ 
+3. *(First run only)* Install Playwright browsers:
+
+   ```bash
+   pwsh bin/Debug/net8.0/playwright.ps1 install chromium
+   ```
+
+4. Run via `dotnet run` (append `--` before any CLI flags):
+ 
+   ```bash
+   dotnet run
+   dotnet run -- --url https://example.com --max-pages 50
+   ```
+
+## Usage
+
+site2llms supports two modes: **CLI** (pass arguments) and **interactive** (answer prompts).
+
+### CLI mode
+
+Pass at least `--url` to activate CLI mode. All other flags are optional with sensible defaults.
 
 ```bash
-dotnet build
+site2llms --url https://example.com
 ```
 
-2. Run:
+#### Available flags
+
+| Flag | Description | Default |
+|---|---|---|
+| `--url <URL>` | Root URL to crawl *(required)* | — |
+| `--max-pages <N>` | Maximum number of pages to process | `200` |
+| `--max-depth <N>` | Maximum BFS crawl depth for discovery | `3` |
+| `--delay <ms>` | Politeness delay between requests (ms) | `250` |
+| `--ollama-url <URL>` | Ollama API base URL | `http://localhost:11434` |
+| `--ollama-model <NAME>` | Ollama model identifier | `minimax-m2.5:cloud` |
+| `--cookies <PATH>` | Path to a Netscape/JSON cookie file | — |
+| `--same-host-only` | Restrict discovery to same host | *(on by default)* |
+| `--no-same-host` | Allow cross-host discovery | — |
+| `--dry-run` | Discover URLs only — skip fetching, summarisation and output | — |
+| `-h`, `--help` | Show help message and exit | — |
+
+#### Examples
 
 ```bash
-dotnet run
+# Minimal — crawl with defaults
+site2llms --url https://example.com
+
+# Limit scope
+site2llms --url https://example.com --max-pages 50 --max-depth 2
+
+# Use a different model
+site2llms --url https://example.com --ollama-model llama3
+
+# Bypass protection with cookies
+site2llms --url https://protected-site.com --cookies cookies.txt
+
+# Preview discovered URLs without processing
+site2llms --url https://example.com --dry-run
+
+# Full example
+site2llms --url https://example.com --max-pages 50 --delay 500 --cookies cookies.txt --ollama-model llama3
+```
+
+> When building from source, prefix with `dotnet run --` :
+> ```bash
+> dotnet run -- --url https://example.com --dry-run
+> ```
+
+### Interactive mode
+
+Run without arguments to enter interactive mode, where the tool prompts for each option:
+
+```bash
+site2llms
 ```
 
 3. Answer the interactive prompts:
@@ -338,4 +448,6 @@ dotnet run
 
 ---
 
-**Possible next steps:** CLI arguments (`--url`, `--max-pages`, `--cookies`, etc.), external cache source fallback (Google Cache / Wayback Machine), and stealth browser patches for more aggressive bot protection.
+**Possible next steps:** 
+- external cache source fallback (Google Cache / Wayback Machine)
+- stealth browser patches for more aggressive bot protection.

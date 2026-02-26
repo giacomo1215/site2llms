@@ -32,6 +32,21 @@ public class SummarizationPipeline(
         var discovered = await discovery.DiscoverAsync(options, ct);
         logger.LogInformation("Discovered {Count} pages", discovered.Count);
 
+        // Dry-run: report discovered URLs and exit early.
+        if (options.DryRun)
+        {
+            logger.LogInformation("Dry-run mode — listing discovered URLs (capped to {Max})", options.MaxPages);
+            var index = 0;
+            foreach (var item in discovered.Take(options.MaxPages))
+            {
+                index++;
+                logger.LogInformation("  [{Index}] {Url}", index, item.Url);
+            }
+
+            var dryOutputRoot = Path.Combine("output", site2llms.Core.Utils.UrlUtils.SafeHost(rootUrl));
+            return new RunResult(discovered.Count, 0, 0, 0, 0, dryOutputRoot);
+        }
+
         // Step 2: load manifest for cache checks.
         var manifest = await manifestStore.LoadAsync(rootUrl, ct);
 

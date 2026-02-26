@@ -440,7 +440,7 @@ dotnet run
 
 ## Current limitations
 
-- Interactive prompts only (no CLI flags yet)
+- Primarily interactive prompts; CLI flags are available but still limited
 - Single model provider (Ollama)
 - Heuristic extraction may miss content in complex SPA frameworks
 - Cookie files must be manually exported from a browser session

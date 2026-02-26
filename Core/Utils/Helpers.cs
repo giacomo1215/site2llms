@@ -96,11 +96,11 @@ public static class Helpers
     /// Probes the target site for common anti-bot protections by analyzing the HTML of the root page.
     /// If a challenge is detected, it attempts to resolve it using a headless Playwright session, which can then be used for subsequent requests to improve access and compatibility.
     /// </summary>
-    /// <param name="webHttpClient"></param>
-    /// <param name="rootUrl"></param>
-    /// <param name="cookieEntries"></param>
-    /// <param name="wordPressRestClient"></param>
-    /// <param name="loggerFactory"></param>
+    /// <param name="webHttpClient">The HTTP client used to send the initial probe request and retrieve the HTML for the specified root URL.</param>
+    /// <param name="rootUrl">The root URL of the site to probe for anti-bot or other access protection mechanisms.</param>
+    /// <param name="cookieEntries">A read-only collection of cookies that will be applied when warming up the headless browser session to help bypass site protections.</param>
+    /// <param name="wordPressRestClient">The WordPress REST client whose <see cref="WordPressRestClient.Session"/> will be set to the created headless session if a challenge is successfully resolved.</param>
+    /// <param name="loggerFactory">The factory used to create loggers for the site probe and the Playwright session.</param>
     /// <returns>A <see cref="PlaywrightSession"/> instance if a challenge was resolved, otherwise null.</returns>
     public static async Task<PlaywrightSession?> ProbeSiteProtectionAsync(
 	HttpClient webHttpClient,

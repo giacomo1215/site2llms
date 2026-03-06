@@ -52,6 +52,7 @@ var discovery = new CompositeDiscovery(new IUrlDiscovery[]
 {
 	new WordPressRestDiscovery(wordPressRestClient, loggerFactory.CreateLogger<WordPressRestDiscovery>()),
 	new SitemapDiscovery(webHttpClient),
+	new RssDiscovery(webHttpClient),
 	new CrawlDiscovery(webHttpClient)
 });
 

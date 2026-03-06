@@ -3,37 +3,42 @@ using site2llms.Core.Models;
 namespace site2llms.Core.Services.Discovery;
 
 /// <summary>
-/// Tries discovery strategies in order and returns the first non-empty result set.
+/// Runs discovery strategies in order, merging their results.
+/// Earlier strategies have precedence when the same URL is found multiple times.
 /// </summary>
 public class CompositeDiscovery : IUrlDiscovery
 {
     private readonly IReadOnlyList<IUrlDiscovery> _strategies;
 
-    /// <summary>
-    /// Creates a composite discovery pipeline where order defines priority.
-    /// </summary>
+
     public CompositeDiscovery(IEnumerable<IUrlDiscovery> strategies) => _strategies = strategies.ToList();
 
-    /// <summary>
-    /// Runs strategies sequentially until one produces URLs.
-    /// </summary>
-    public async Task<IReadOnlyList<DiscoveredUrl>> DiscoverAsync(CrawlOptions options, CancellationToken ct = default)
+
+    public async Task<IReadOnlyList<DiscoveredUrl>> DiscoverAsync(
+        CrawlOptions options,
+        CancellationToken ct = default)
     {
-        foreach (var s in _strategies)
+        var merged = new List<DiscoveredUrl>();
+        var seen   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var strategy in _strategies)
         {
-            // First successful strategy wins (sitemap > rss > crawl in Program.cs).
-            var urls = await s.DiscoverAsync(options, ct);
-            if (urls.Count > 0)
+            if (merged.Count >= options.MaxPages)
+                break;
+
+            var urls = await strategy.DiscoverAsync(options, ct);
+
+            foreach (var url in urls)
             {
-                return urls
-                    // Deduplicate canonical string form before returning to pipeline.
-                    .DistinctBy(x => x.Url.AbsoluteUri)
-                    .Take(options.MaxPages)
-                    .ToList();
+                if (seen.Add(url.Url.AbsoluteUri))
+                {
+                    merged.Add(url);
+
+                    if (merged.Count >= options.MaxPages) break;
+                }
             }
         }
 
-        // No strategy found anything usable.
-        return Array.Empty<DiscoveredUrl>();
+        return merged;
     }
 }

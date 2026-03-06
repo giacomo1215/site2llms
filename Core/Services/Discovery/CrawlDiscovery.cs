@@ -1,3 +1,4 @@
+using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using site2llms.Core.Models;
 using site2llms.Core.Utils;
@@ -23,8 +24,13 @@ public class CrawlDiscovery(HttpClient http) : IUrlDiscovery
 
         // BFS queue keeps depth info for max-depth enforcement.
         var q = new Queue<DiscoveredUrl>();
-        q.Enqueue(new DiscoveredUrl(canonicalRoot, "crawl", 0));
-        seen.Add(canonicalRoot.AbsoluteUri);
+        
+        // Check if root URL is allowed before enqueueing.
+        if (UrlFilter.IsAllowed(canonicalRoot, options))
+        {
+            q.Enqueue(new DiscoveredUrl(canonicalRoot, "crawl", 0));
+            seen.Add(canonicalRoot.AbsoluteUri);
+        }
 
         var parser = new HtmlParser();
         var outList = new List<DiscoveredUrl>();
@@ -56,11 +62,7 @@ public class CrawlDiscovery(HttpClient http) : IUrlDiscovery
 
                 foreach (var u in links)
                 {
-                    // Keep overall queue bounded by page budget.
-                    if (outList.Count + q.Count >= options.MaxPages)
-                    {
-                        break;
-                    }
+                    if (outList.Count + q.Count >= options.MaxPages) break;
 
                     if (seen.Add(u.AbsoluteUri))
                         q.Enqueue(new DiscoveredUrl(u, "crawl", cur.Depth + 1));

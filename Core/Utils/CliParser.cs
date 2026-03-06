@@ -33,7 +33,7 @@ public static class CliParser
         // --help / -h
         if (args.Any(a => a is "--help" or "-h"))
         {
-            PrintUsage();
+            Helpers.PrintUsage();
             return CliParseResult.Exit;
         }
 
@@ -46,6 +46,8 @@ public static class CliParser
         string ollamaModel = DefaultOllamaModel;
         string? cookieFilePath = null;
         bool dryRun = false;
+        var includePatterns = new List<string>();
+        var excludePatterns = new List<string>();
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -93,6 +95,14 @@ public static class CliParser
                     dryRun = true;
                     break;
 
+                case "--include":
+                    includePatterns.Add(NextValue(args, ref i, arg));
+                    break;
+
+                case "--exclude":
+                    excludePatterns.Add(NextValue(args, ref i, arg));
+                    break;
+
                 default:
                     Error($"Unknown argument: {arg}");
                     break;
@@ -121,7 +131,9 @@ public static class CliParser
             OllamaBaseUrl: ollamaBaseUrl,
             OllamaModel: ollamaModel,
             CookieFilePath: cookieFilePath,
-            DryRun: dryRun
+            DryRun: dryRun,
+            IncludePatterns: includePatterns,
+            ExcludePatterns: excludePatterns
         );
 
         return CliParseResult.Parsed;
@@ -150,42 +162,6 @@ public static class CliParser
         Console.Error.WriteLine("Run with --help for usage information.");
         Environment.Exit(1);
     }
-
-    private static void PrintUsage()
-    {
-        Console.WriteLine("""
-            site2llms — Universal website summarizer
-
-            Usage:
-              site2llms [options]
-
-            When invoked without arguments the tool starts in interactive mode.
-
-            Options:
-              --url <URL>            Root URL to crawl (required in CLI mode)
-              --max-pages <N>        Maximum number of pages to process        [default: 200]
-              --max-depth <N>        Maximum BFS crawl depth for discovery     [default: 3]
-              --delay <ms>           Politeness delay between requests (ms)    [default: 250]
-              --ollama-url <URL>     Ollama API base URL                       [default: http://localhost:11434]
-              --ollama-model <NAME>  Ollama model identifier                   [default: minimax-m2.5:cloud]
-              --cookies <PATH>       Path to a Netscape/JSON cookie file
-              --same-host-only       Restrict discovery to same host (default)
-              --no-same-host         Allow cross-host discovery
-              --dry-run              Discover URLs only — skip fetching, summarisation and output
-              -h, --help             Show this help message and exit
-
-            Examples:
-              # Interactive mode
-              site2llms
-
-              # CLI mode — basic
-              site2llms --url https://example.com
-
-              # CLI mode — full
-              site2llms --url https://example.com --max-pages 50 --cookies cookies.txt --ollama-model llama3
-            """);
-    }
-
     #endregion
 }
 

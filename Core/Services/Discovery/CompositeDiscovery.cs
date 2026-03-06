@@ -1,4 +1,5 @@
 using site2llms.Core.Models;
+using site2llms.Core.Utils;
 
 namespace site2llms.Core.Services.Discovery;
 
@@ -23,13 +24,14 @@ public class CompositeDiscovery : IUrlDiscovery
 
         foreach (var strategy in _strategies)
         {
-            if (merged.Count >= options.MaxPages)
-                break;
+            if (merged.Count >= options.MaxPages) break;
 
             var urls = await strategy.DiscoverAsync(options, ct);
 
             foreach (var url in urls)
             {
+                if (!UrlFilter.IsAllowed(url.Url, options)) continue;
+                
                 if (seen.Add(url.Url.AbsoluteUri))
                 {
                     merged.Add(url);

@@ -36,6 +36,7 @@ Most tools in this space either stop at SEO analysis, produce a single flat inde
 - Detects WordPress sites automatically and uses the REST API to get server-rendered content (bypasses JS-dependent themes like Elementor).
 - Fetches page HTML with browser-like headers; automatically retries with a **headless Chromium browser** when bot-protection or challenge pages are detected.
 - Supports **cookie injection** from a Netscape/JSON cookie file to bypass CAPTCHAs and authentication gates.
+- Supports optional **URL include/exclude filters** to constrain discovery to specific sections of a site.
 - Extracts main content (`main`, `article`, role/content selectors, then `body`) and strips boilerplate.
 - Converts extracted content to Markdown.
 - Calls Ollama `/api/generate` to produce structured summaries (TL;DR, key points, FAQ, context).
@@ -145,6 +146,8 @@ site2llms --url https://example.com
 | `--ollama-url <URL>` | Ollama API base URL | `http://localhost:11434` |
 | `--ollama-model <NAME>` | Ollama model identifier | `minimax-m2.5:cloud` |
 | `--cookies <PATH>` | Path to a Netscape/JSON cookie file | — |
+| `--include <PATTERN>` | Include only URLs matching the pattern; repeatable | — |
+| `--exclude <PATTERN>` | Exclude URLs matching the pattern; repeatable | — |
 | `--same-host-only` | Restrict discovery to same host | *(on by default)* |
 | `--no-same-host` | Allow cross-host discovery | — |
 | `--dry-run` | Discover URLs only — skip fetching, summarisation and output | — |
@@ -165,11 +168,14 @@ site2llms --url https://example.com --ollama-model llama3
 # Bypass protection with cookies
 site2llms --url https://protected-site.com --cookies cookies.txt
 
+# Keep only documentation pages and skip blog/archive areas
+site2llms --url https://example.com --include "*docs*" --exclude "*blog*" --exclude "*tag*"
+
 # Preview discovered URLs without processing
 site2llms --url https://example.com --dry-run
 
 # Full example
-site2llms --url https://example.com --max-pages 50 --delay 500 --cookies cookies.txt --ollama-model llama3
+site2llms --url https://example.com --max-pages 50 --delay 500 --cookies cookies.txt --ollama-model llama3 --include "*/docs/*"
 ```
 
 > When building from source, prefix with `dotnet run --` :
@@ -196,6 +202,8 @@ site2llms
 | Ollama base URL | `http://localhost:11434` |
 | Ollama model | `minimax-m2.5:cloud` |
 | Cookie file (Netscape/JSON) | *(blank to skip)* |
+| Include URL patterns (comma-separated, blank for none) | *(blank to skip)* |
+| Exclude URL patterns (comma-separated, blank for none) | *(blank to skip)* |
 
 ## Example run
 
@@ -208,6 +216,8 @@ Delay ms between requests [250]: 100
 Ollama base URL [http://localhost:11434]:
 Ollama model [minimax-m2.5:cloud]:
 Cookie file (Netscape/JSON, blank to skip) []:
+Include URL patterns (comma-separated, blank for none) []:
+Exclude URL patterns (comma-separated, blank for none) []:
 WP REST detected: no
 Discovered 3 pages.
 Processing: https://example.com/
@@ -289,11 +299,12 @@ Discover → Fetch → Extract → Summarize → Write → Build index
 
 1. **Discover** — `CompositeDiscovery` tries strategies in order (WP REST → Sitemap → RSS/Atom → Crawl); first non-empty result wins.
 2. **Fetch** — WordPress REST `content.rendered` (if WP detected) → HTTP with browser headers → Headless Chromium fallback. Cookies injected into both HTTP and headless paths.
-3. **Extract** — `HeuristicContentExtractor` selects the best content container, strips boilerplate, converts to Markdown.
-4. **Cache check** — SHA-256 content hash compared against `manifest.json`; unchanged pages are skipped.
-5. **Summarize** — `OllamaSummarizer` calls `/api/generate` (temperature 0.2) with a structured prompt template.
-6. **Write** — `FileOutputWriter` persists the summary file; `ManifestStore` updates the cache.
-7. **Build index** — `LlmsTxtBuilder` generates the `llms.txt` file (sorted by title, deduplicated by filename slug).
+3. **Filter** — include/exclude URL patterns are applied during discovery; `--exclude` takes precedence over `--include`.
+4. **Extract** — `HeuristicContentExtractor` selects the best content container, strips boilerplate, converts to Markdown.
+5. **Cache check** — SHA-256 content hash compared against `manifest.json`; unchanged pages are skipped.
+6. **Summarize** — `OllamaSummarizer` calls `/api/generate` (temperature 0.2) with a structured prompt template.
+7. **Write** — `FileOutputWriter` persists the summary file; `ManifestStore` updates the cache.
+8. **Build index** — `LlmsTxtBuilder` generates the `llms.txt` file (sorted by title, deduplicated by filename slug).
 
 ## Discovery strategies
 
@@ -301,10 +312,35 @@ Strategies are tried in order; the first one that returns results wins.
 
 | Strategy | When it's used | How it works |
 |---|---|---|
-| **WordPress REST** | WP sites (auto-detected) | Probes `/wp-json/` and `/?rest_route=/`, fetches `wp/v2/pages` + `wp/v2/posts` with pagination, skips attachments and password-protected posts, caches `content.rendered` in-memory |
+| **WordPress REST** | WP sites (auto-detected) | Probes `/wp-json/` and `/?rest_route=/`, fetches `wp/v2/pages` + `wp/v2/posts` with pagination, skips attachments and password-protected posts, caches `content.rendered` in-memory, then applies URL filters |
 | **Sitemap** | Any site with XML sitemaps | Tries `/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`; supports both `sitemapindex` and `urlset` |
 | **RSS/Atom** | Feed-enabled sites | Tries `/feed/`, `/rss`, `/rss.xml`, `/feed.xml`; extracts page links from feed items |
-| **Crawl** | Fallback for all other sites | BFS crawl from root URL; honors `MaxDepth`, `MaxPages`, `DelayMs`, and same-host filtering |
+| **Crawl** | Fallback for all other sites | BFS crawl from root URL; honors `MaxDepth`, `MaxPages`, `DelayMs`, same-host filtering, and skips the root entirely if it does not match the active include/exclude rules |
+
+## URL filtering
+
+Use URL filters when you want to limit processing to a subsection of a site or skip noisy areas such as tag pages, archives, account screens, or search results.
+
+- `--include` is repeatable in CLI mode and acts as an allow-list. If at least one include pattern is provided, a URL must match one of them to be processed.
+- `--exclude` is repeatable in CLI mode and always wins over `--include`.
+- Interactive mode accepts comma-separated include/exclude patterns and splits them into multiple rules.
+- Pattern matching is case-insensitive.
+- Patterns containing `*` are treated as wildcards and matched against the full absolute URL.
+- Patterns without `*` use a case-insensitive substring match against the full absolute URL.
+
+Examples:
+
+```bash
+# Only product pages
+site2llms --url https://example.com --include "*/products/*"
+
+# Keep docs, but skip changelog and tag pages
+site2llms --url https://example.com --include "*docs*" --exclude "*changelog*" --exclude "*tag*"
+
+# Interactive mode accepts comma-separated values
+Include URL patterns (comma-separated, blank for none) []: *docs*, */guides/*
+Exclude URL patterns (comma-separated, blank for none) []: *tag*, *page/*
+```
 
 ## Extraction heuristics
 
@@ -373,6 +409,7 @@ Two formats are supported:
 ## Configuration notes
 
 - `SameHostOnly` is set to `true` — only same-host URLs are discovered and processed.
+- URL filters are evaluated against the full absolute URL and are enforced during discovery, before fetch/extract/summarize work begins.
 - HTTP client timeout is **90 seconds**.
 - Both website fetching and Ollama calls use browser-like HTTP headers.
 - Automatic decompression (gzip, deflate, Brotli) is enabled.
@@ -399,6 +436,13 @@ Two formats are supported:
 - Some pages are mostly navigation or script-rendered and may be skipped.
 - Try specific content URLs instead of generic landing pages.
 - For WordPress/Elementor sites, the WP REST API path usually gets real content even when HTML fetch fails.
+
+### Unexpectedly missing pages
+
+- Check whether `--include` is too restrictive; once present, only matching URLs are allowed.
+- Check whether an `--exclude` pattern is overriding an include rule.
+- Remember that matching is done against the full absolute URL, not only the path segment.
+- In interactive mode, separate multiple patterns with commas.
 
 ### Protected / CAPTCHA sites
 

@@ -1,22 +1,13 @@
 using Microsoft.Extensions.Logging;
 using site2llms.Core.Models;
-using site2llms.Core.Pipeline;
-using site2llms.Core.Services.Discovery;
-using site2llms.Core.Services.Extraction;
-using site2llms.Core.Services.Fetching;
-using site2llms.Core.Services.Output;
-using site2llms.Core.Services.Summarization;
 using site2llms.Core.Services.WordPress;
-using site2llms.Core.Utils;
 using System.Net;
 
 namespace site2llms.Core.Utils;
 
 public static class Helpers
 {
-    /// <summary>
-    /// Prints a stylized greeting message to the console on application start.
-    /// </summary>
+    #region CLI and Interactive Options
     public static void Greet()
     {
         Console.WriteLine("                                                                                             ");
@@ -37,6 +28,44 @@ public static class Helpers
         Console.WriteLine("GitHub: https://github.com/giacomo1215/site2llms");
         Console.WriteLine("                                                                                             ");
     }
+    
+    public static void PrintUsage()
+    {
+        Console.WriteLine("""
+            site2llms — Universal website summarizer
+
+            Usage:
+              site2llms [options]
+
+            When invoked without arguments the tool starts in interactive mode.
+
+            Options:
+              --url <URL>            Root URL to crawl (required in CLI mode)
+              --max-pages <N>        Maximum number of pages to process        [default: 200]
+              --max-depth <N>        Maximum BFS crawl depth for discovery     [default: 3]
+              --delay <ms>           Politeness delay between requests (ms)    [default: 250]
+              --ollama-url <URL>     Ollama API base URL                       [default: http://localhost:11434]
+              --ollama-model <NAME>  Ollama model identifier                   [default: minimax-m2.5:cloud]
+              --cookies <PATH>       Path to a Netscape/JSON cookie file
+              --include <PATTERN>    Include only URLs matching the pattern    [repeatable]
+              --exclude <PATTERN>    Exclude URLs matching the pattern         [repeatable]
+              --same-host-only       Restrict discovery to same host (default)
+              --no-same-host         Allow cross-host discovery
+              --dry-run              Discover URLs only — skip fetching, summarisation and output
+              -h, --help             Show this help message and exit
+
+            Examples:
+              # Interactive mode
+              site2llms
+
+              # CLI mode — basic
+              site2llms --url https://example.com
+
+              # CLI mode — full
+                            site2llms --url https://example.com --max-pages 50 --cookies cookies.txt --ollama-model llama3 --include "*/docs/*" --exclude "*tag*"
+            """);
+    }
+    #endregion
 
     /// <summary>
     /// Resolves <see cref="CrawlOptions"/> from CLI arguments when supplied, or falls back to
@@ -60,14 +89,14 @@ public static class Helpers
     /// <returns>A <see cref="CrawlOptions"/> instance configured with the values entered by the user.</returns>
     public static CrawlOptions CollectOptions()
     {
-        var rootUrl = PromptString("Root URL", "https://example.com");
-        var maxPages = PromptInt("Max pages", 200);
-        var maxDepth = PromptInt("Max depth for crawl fallback", 3);
-        var delayMs = PromptInt("Delay ms between requests", 250);
-        var ollamaBaseUrl = PromptString("Ollama base URL", "http://localhost:11434");
-        var ollamaModel = PromptString("Ollama model", "minimax-m2.5:cloud");
-        var cookieFile = PromptString("Cookie file (Netscape/JSON, blank to skip)", "");
-        var cookieFilePath = string.IsNullOrWhiteSpace(cookieFile) ? null : cookieFile;
+        var rootUrl         = PromptString("Root URL", "https://example.com");
+        var maxPages        = PromptInt("Max pages", 200);
+        var maxDepth        = PromptInt("Max depth for crawl fallback", 3);
+        var delayMs         = PromptInt("Delay ms between requests", 250);
+        var ollamaBaseUrl   = PromptString("Ollama base URL", "http://localhost:11434");
+        var ollamaModel     = PromptString("Ollama model", "minimax-m2.5:cloud");
+        var cookieFile      = PromptString("Cookie file (Netscape/JSON, blank to skip)", "");
+        var cookieFilePath  = string.IsNullOrWhiteSpace(cookieFile) ? null : cookieFile;
 
         if (cookieFilePath is not null && !File.Exists(cookieFilePath))
         {
@@ -80,6 +109,12 @@ public static class Helpers
             Console.WriteLine($"Cookies loaded from: {cookieFilePath}");
         }
 
+        var includeRaw = PromptString("Include URL patterns (comma-separated, blank for none)", "");
+        var excludeRaw = PromptString("Exclude URL patterns (comma-separated, blank for none)", "");
+
+        var includePatterns = SplitPatterns(includeRaw);
+        var excludePatterns = SplitPatterns(excludeRaw);
+
         return new CrawlOptions(
             RootUrl: rootUrl,
             MaxPages: maxPages,
@@ -88,8 +123,81 @@ public static class Helpers
             DelayMs: delayMs,
             OllamaBaseUrl: ollamaBaseUrl,
             OllamaModel: ollamaModel,
-            CookieFilePath: cookieFilePath
+            CookieFilePath: cookieFilePath,
+            IncludePatterns: includePatterns,
+            ExcludePatterns: excludePatterns
         );
+    }
+
+    #region User Input Prompts
+    /// <summary>
+    /// Prompts the user for a string input with a default value. If the user enters nothing, the default is returned.
+    /// </summary>
+    /// <param name="label"></param>
+    /// <param name="defaultValue"></param>
+    public static string PromptString(string label, string defaultValue)
+    {
+        Console.Write($"{label} [{defaultValue}]: ");
+        var input = Console.ReadLine()?.Trim();
+        return string.IsNullOrWhiteSpace(input) ? defaultValue : input;
+    }
+
+    /// <summary>
+    /// Prompts the user for an integer input with a default value. If the user enters nothing, the default is returned. The method will continue to prompt until a valid positive integer is entered or the user accepts the default.
+    /// </summary>
+    /// <param name="label"></param>
+    /// <param name="defaultValue"></param>
+    public static int PromptInt(string label, int defaultValue)
+    {
+        while (true)
+        {
+            Console.Write($"{label} [{defaultValue}]: ");
+            var input = Console.ReadLine()?.Trim();
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return defaultValue;
+            }
+
+            if (int.TryParse(input, out var parsed) && parsed > 0)
+            {
+                return parsed;
+            }
+
+            Console.WriteLine("Please enter a positive number.");
+        }
+    }
+    #endregion
+
+    #region Utilities
+    private static IReadOnlyList<string> SplitPatterns(string raw)
+    {
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    /// <summary>
+    /// Builds a shared HttpClient instance with reasonable defaults for crawling, including user-agent, accept headers, and optional cookie support.
+    /// </summary>
+    /// <param name="cookies">Optional cookie container used by the underlying HTTP handler; if null, a new container is created.</param>
+    /// <returns>A configured <see cref="HttpClient"/> instance with sensible defaults for crawling.</returns>
+    public static HttpClient BuildHttpClient(CookieContainer? cookies = null)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
+            UseCookies = cookies is not null,
+            CookieContainer = cookies ?? new CookieContainer()
+        };
+
+        var client = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromSeconds(90)
+        };
+
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("site2llms/1.0 (+contact)");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36");
+        client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+        return client;
     }
 
     /// <summary>
@@ -146,70 +254,6 @@ public static class Helpers
         }
 
         return session;
-    }
-
-    /// <summary>
-    /// Builds a shared HttpClient instance with reasonable defaults for crawling, including user-agent, accept headers, and optional cookie support.
-    /// </summary>
-    /// <param name="cookies">Optional cookie container used by the underlying HTTP handler; if null, a new container is created.</param>
-    /// <returns>A configured <see cref="HttpClient"/> instance with sensible defaults for crawling.</returns>
-    public static HttpClient BuildHttpClient(CookieContainer? cookies = null)
-    {
-        var handler = new SocketsHttpHandler
-        {
-            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
-            UseCookies = cookies is not null,
-            CookieContainer = cookies ?? new CookieContainer()
-        };
-
-        var client = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromSeconds(90)
-        };
-
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("site2llms/1.0 (+contact)");
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36");
-        client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-        client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
-        return client;
-    }
-
-    #region User Input Prompts
-    /// <summary>
-    /// Prompts the user for a string input with a default value. If the user enters nothing, the default is returned.
-    /// </summary>
-    /// <param name="label"></param>
-    /// <param name="defaultValue"></param>
-    public static string PromptString(string label, string defaultValue)
-    {
-        Console.Write($"{label} [{defaultValue}]: ");
-        var input = Console.ReadLine()?.Trim();
-        return string.IsNullOrWhiteSpace(input) ? defaultValue : input;
-    }
-
-    /// <summary>
-    /// Prompts the user for an integer input with a default value. If the user enters nothing, the default is returned. The method will continue to prompt until a valid positive integer is entered or the user accepts the default.
-    /// </summary>
-    /// <param name="label"></param>
-    /// <param name="defaultValue"></param>
-    public static int PromptInt(string label, int defaultValue)
-    {
-        while (true)
-        {
-            Console.Write($"{label} [{defaultValue}]: ");
-            var input = Console.ReadLine()?.Trim();
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                return defaultValue;
-            }
-
-            if (int.TryParse(input, out var parsed) && parsed > 0)
-            {
-                return parsed;
-            }
-
-            Console.WriteLine("Please enter a positive number.");
-        }
     }
     #endregion
 }

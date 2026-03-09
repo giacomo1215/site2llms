@@ -46,11 +46,14 @@ public class OllamaSummarizer(HttpClient httpClient, string baseUrl, string mode
         var contentHash = HashUtils.Sha256(pageContent.ExtractedMarkdown);
 
         // Stable file names come from source URL slugs.
-        var slug = UrlUtils.SlugFromUrl(pageContent.Url);
-        var fileName = $"{slug}.md";
+        // var slug = UrlUtils.SlugFromUrl(pageContent.Url);
+        // var fileName = $"{slug}.md";
 
+        var canonicalUrl = UrlUtils.Canonicalize(pageContent.Url);
+        var fileName = UrlUtils.BuildStableFileName(canonicalUrl);
+        
         return new SummaryResult(
-            Url: pageContent.Url,
+            Url: canonicalUrl,
             Title: pageContent.Title,
             Markdown: markdown,
             ContentHash: contentHash,

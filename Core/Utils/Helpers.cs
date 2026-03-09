@@ -65,7 +65,6 @@ public static class Helpers
                             site2llms --url https://example.com --max-pages 50 --cookies cookies.txt --ollama-model llama3 --include "*/docs/*" --exclude "*tag*"
             """);
     }
-    #endregion
 
     /// <summary>
     /// Resolves <see cref="CrawlOptions"/> from CLI arguments when supplied, or falls back to
@@ -128,7 +127,8 @@ public static class Helpers
             ExcludePatterns: excludePatterns
         );
     }
-
+    #endregion
+   
     #region User Input Prompts
     /// <summary>
     /// Prompts the user for a string input with a default value. If the user enters nothing, the default is returned.

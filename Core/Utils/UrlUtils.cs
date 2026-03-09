@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using System.Text;
+//using AngleSharp.Dom;
 
 namespace site2llms.Core.Utils;
 
@@ -67,5 +70,16 @@ public static class UrlUtils
         combined = Regex.Replace(combined, @"_{2,}", "_").Trim('_');
 
         return string.IsNullOrWhiteSpace(combined) ? "home" : combined;
+    }
+
+    public static string BuildStableFileName(Uri url)
+    {
+        var canonical = Canonicalize(url).AbsoluteUri;
+        var slug = SlugFromUrl(url);
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
+        var hash = Convert.ToHexString(bytes).ToLowerInvariant()?[..8];
+
+        return $"{slug}_{hash}.md";
     }
 }

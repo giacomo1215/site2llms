@@ -297,7 +297,7 @@ Per-URL cache metadata (`url`, `contentHash`, `relativeOutputPath`, `lastGenerat
 Discover → Fetch → Extract → Summarize → Write → Build index
 ```
 
-1. **Discover** — `CompositeDiscovery` tries strategies in order (WP REST → Sitemap → RSS/Atom → Crawl); first non-empty result wins.
+1. **Discover** — `CompositeDiscovery` runs strategies in order (WP REST → Sitemap → RSS/Atom → Crawl), merges their results, and deduplicates URLs; when the same URL is found multiple times, the earliest strategy keeps precedence.
 2. **Fetch** — WordPress REST `content.rendered` (if WP detected) → HTTP with browser headers → Headless Chromium fallback. Cookies injected into both HTTP and headless paths.
 3. **Filter** — include/exclude URL patterns are applied during discovery; `--exclude` takes precedence over `--include`.
 4. **Extract** — `HeuristicContentExtractor` selects the best content container, strips boilerplate, converts to Markdown.
@@ -308,7 +308,7 @@ Discover → Fetch → Extract → Summarize → Write → Build index
 
 ## Discovery strategies
 
-Strategies are tried in order; the first one that returns results wins.
+Strategies are run in order, and their results are merged. If the same URL is found by multiple strategies, the earliest strategy keeps precedence for that URL.
 
 | Strategy | When it's used | How it works |
 |---|---|---|

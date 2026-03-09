@@ -46,6 +46,7 @@ public static class CliParser
         string ollamaModel = DefaultOllamaModel;
         string? cookieFilePath = null;
         bool dryRun = false;
+        bool generateLlmsFullTxt = false;
         var includePatterns = new List<string>();
         var excludePatterns = new List<string>();
 
@@ -95,6 +96,10 @@ public static class CliParser
                     dryRun = true;
                     break;
 
+                case "--llms-full":
+                    generateLlmsFullTxt = true;
+                    break;
+
                 case "--include":
                     includePatterns.Add(NextValue(args, ref i, arg));
                     break;
@@ -132,6 +137,7 @@ public static class CliParser
             OllamaModel: ollamaModel,
             CookieFilePath: cookieFilePath,
             DryRun: dryRun,
+            GenerateLlmsFullTxt: generateLlmsFullTxt,
             IncludePatterns: includePatterns,
             ExcludePatterns: excludePatterns
         );

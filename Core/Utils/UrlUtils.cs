@@ -10,10 +10,46 @@ namespace site2llms.Core.Utils;
 /// </summary>
 public static class UrlUtils
 {
+    
+    #region Actions
+
+    #region Transformations
     /// <summary>
-    /// Returns true when URI uses HTTP/S protocol.
+    /// Normalizes the query string by removing tracking parameters and sorting the remaining parameters.
     /// </summary>
-    public static bool IsHttp(Uri u) => u.Scheme is "http" or "https";
+    /// <param name="query">The query string to normalize.</param>
+    /// <returns>The normalized query string.</returns>
+    private static string NormalizeQuery(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return string.Empty;
+
+        var trimmed = query.TrimStart('?');
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return string.Empty;
+
+        var pairs = trimmed
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part =>
+            {
+                var idx = part.IndexOf('=');
+                if (idx < 0)
+                {
+                    var keyOnly = Uri.UnescapeDataString(part);
+                    return new KeyValuePair<string, string>(keyOnly, string.Empty);
+                }
+
+                var key = Uri.UnescapeDataString(part[..idx]);
+                var value = Uri.UnescapeDataString(part[(idx + 1)..]);
+                return new KeyValuePair<string, string>(key, value);
+            })
+            .Where(kvp => !IsTrackingParameter(kvp.Key))
+            .OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(kvp => kvp.Value, StringComparer.Ordinal);
+
+        return string.Join("&", pairs.Select(kvp =>
+            $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
+    }
 
     /// <summary>
     /// Converts a link href into an absolute URI while ignoring non-navigational schemes.
@@ -36,14 +72,38 @@ public static class UrlUtils
         catch { return null; }
     }
 
+    #endregion
+
+    #region Output    
     /// <summary>
     /// Canonicalizes URI by removing fragment so URL identity is stable for dedup/cache.
     /// </summary>
     public static Uri Canonicalize(Uri u)
     {
-        var b = new UriBuilder(u);
-        b.Fragment = "";
-        return b.Uri;
+        // var b = new UriBuilder(u);
+        // b.Fragment = "";
+        // return b.Uri;
+
+        var builder = new UriBuilder(u)
+        {
+            Fragment = string.Empty
+        };
+
+        if ((builder.Scheme == Uri.UriSchemeHttp && builder.Port == 80) || (builder.Scheme == Uri.UriSchemeHttps && builder.Port == 443))
+        {
+            builder.Port = -1; // Default port, can be omitted
+        }
+
+        var path = builder.Path;
+        if (string.IsNullOrWhiteSpace(path)) path = "/";
+        else if (path.Length > 1 && path.EndsWith("/")) path = path.TrimEnd('/');
+
+        builder.Path = path;
+        builder.Query = NormalizeQuery(builder.Query);
+
+        return builder.Uri;
+
+        // var parsed = QueryHelpers.ParseQuery(builder.Query);
     }
 
     /// <summary>
@@ -72,6 +132,11 @@ public static class UrlUtils
         return string.IsNullOrWhiteSpace(combined) ? "home" : combined;
     }
 
+    /// <summary>
+    /// Builds a stable filename for a given URL by combining a slug from the path/query and a hash of the canonical URL.
+    /// </summary>
+    /// <param name="url">Input URL to generate filename for.</param>
+    /// <returns>Stable filename string.</returns>
     public static string BuildStableFileName(Uri url)
     {
         var canonical = Canonicalize(url).AbsoluteUri;
@@ -82,4 +147,28 @@ public static class UrlUtils
 
         return $"{slug}_{hash}.md";
     }
+    #endregion  
+    
+    #endregion  
+    
+    #region Checks
+
+    /// <summary>
+    /// Returns true when URI uses HTTP/S protocol.
+    /// </summary>
+    public static bool IsHttp(Uri u) => u.Scheme is "http" or "https";
+    
+    /// <summary>
+    /// Returns true when query parameter is a known tracking/analytics parameter we want to ignore for canonicalization.
+    /// </summary>
+    /// <param name="key">Query parameter key.</param>
+    /// <returns>True when parameter is a known tracking/analytics parameter.</returns>
+    private static bool IsTrackingParameter(string key)
+    {
+        return key.StartsWith("utm_", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(key, "fbclid", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(key, "gclid", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(key, "msclkid", StringComparison.OrdinalIgnoreCase);
+    }
+    #endregion
 }

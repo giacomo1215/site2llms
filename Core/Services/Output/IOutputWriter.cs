@@ -24,4 +24,12 @@ public interface IOutputWriter
     /// <param name="pages">Page summaries to index.</param>
     /// <param name="ct">Cancellation token.</param>
     Task WriteLlmsTxtAsync(Uri rootUrl, IReadOnlyList<SummaryResult> pages, CancellationToken ct = default);
+
+    /// <summary>
+    /// Writes or updates the llms-full.txt corpus file for all generated pages.
+    /// </summary>
+    /// <param name="rootUrl">Root site URL used for host folder resolution.</param>
+    /// <param name="pages">Page summaries to include in the corpus.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task WriteLlmsFullTxtAsync(Uri rootUrl, IReadOnlyList<SummaryResult> pages, CancellationToken ct = default);
 }

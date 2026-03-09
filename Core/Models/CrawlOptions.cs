@@ -22,6 +22,7 @@ public record CrawlOptions(
     string OllamaModel,
     string? CookieFilePath = null,
     bool DryRun = false,
+    bool GenerateLlmsFullTxt = false,
     IReadOnlyList<string>? IncludePatterns = null,
     IReadOnlyList<string>? ExcludePatterns = null
 );

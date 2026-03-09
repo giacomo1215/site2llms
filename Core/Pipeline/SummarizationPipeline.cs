@@ -43,7 +43,7 @@ public class SummarizationPipeline(
                 logger.LogInformation("  [{Index}] {Url}", index, item.Url);
             }
 
-            var dryOutputRoot = Path.Combine("output", site2llms.Core.Utils.UrlUtils.SafeHost(rootUrl));
+            var dryOutputRoot = Path.Combine("output", Utils.UrlUtils.SafeHost(rootUrl));
             return new RunResult(discovered.Count, 0, 0, 0, 0, dryOutputRoot);
         }
 
@@ -87,7 +87,7 @@ public class SummarizationPipeline(
                 }
 
                 // Step 5: cache check based on extracted-content hash.
-                var contentHash = site2llms.Core.Utils.HashUtils.Sha256(extracted.ExtractedMarkdown);
+                var contentHash = Utils.HashUtils.Sha256(extracted.ExtractedMarkdown);
                 if (manifest.Entries.TryGetValue(extracted.Url.AbsoluteUri, out var existing)
                     && string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase)
                     && !string.IsNullOrWhiteSpace(existing.RelativeOutputPath))
@@ -148,6 +148,11 @@ public class SummarizationPipeline(
 
         // Build/update host-level llms.txt index.
         await outputWriter.WriteLlmsTxtAsync(rootUrl, uniqueIndex, ct);
+
+        if (options.GenerateLlmsFullTxt)
+        {
+            await outputWriter.WriteLlmsFullTxtAsync(rootUrl, uniqueIndex, ct);
+        }
 
         var outputRoot = Path.Combine("output", site2llms.Core.Utils.UrlUtils.SafeHost(rootUrl));
         return new RunResult(discovered.Count, processed, skipped, failed, cached, outputRoot);

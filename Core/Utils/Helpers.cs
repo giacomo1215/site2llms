@@ -52,6 +52,7 @@ public static class Helpers
               --same-host-only       Restrict discovery to same host (default)
               --no-same-host         Allow cross-host discovery
               --dry-run              Discover URLs only — skip fetching, summarisation and output
+              --llms-full            Also generate llms-full.txt with full page corpus
               -h, --help             Show this help message and exit
 
             Examples:
@@ -62,7 +63,7 @@ public static class Helpers
               site2llms --url https://example.com
 
               # CLI mode — full
-                            site2llms --url https://example.com --max-pages 50 --cookies cookies.txt --ollama-model llama3 --include "*/docs/*" --exclude "*tag*"
+              site2llms --url https://example.com --max-pages 50 --cookies cookies.txt --ollama-model llama3 --include "*/docs/*" --exclude "*tag*" --llms-full
             """);
     }
 
@@ -110,6 +111,7 @@ public static class Helpers
 
         var includeRaw = PromptString("Include URL patterns (comma-separated, blank for none)", "");
         var excludeRaw = PromptString("Exclude URL patterns (comma-separated, blank for none)", "");
+        var generateLlmsFullTxt = PromptYesNo("Generate llms-full.txt with full page corpus", false);
 
         var includePatterns = SplitPatterns(includeRaw);
         var excludePatterns = SplitPatterns(excludeRaw);
@@ -123,6 +125,7 @@ public static class Helpers
             OllamaBaseUrl: ollamaBaseUrl,
             OllamaModel: ollamaModel,
             CookieFilePath: cookieFilePath,
+            GenerateLlmsFullTxt: generateLlmsFullTxt,
             IncludePatterns: includePatterns,
             ExcludePatterns: excludePatterns
         );
@@ -164,6 +167,38 @@ public static class Helpers
             }
 
             Console.WriteLine("Please enter a positive number.");
+        }
+    }
+
+    /// <summary>
+    /// Prompts the user for a yes/no value with a default choice.
+    /// </summary>
+    public static bool PromptYesNo(string label, bool defaultValue)
+    {
+        while (true)
+        {
+            var defaultHint = defaultValue ? "Y/n" : "y/N";
+            Console.Write($"{label} [{defaultHint}]: ");
+            var input = Console.ReadLine()?.Trim();
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return defaultValue;
+            }
+
+            if (input.Equals("y", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("yes", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (input.Equals("n", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("no", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            Console.WriteLine("Please answer y/yes or n/no.");
         }
     }
     #endregion

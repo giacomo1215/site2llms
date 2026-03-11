@@ -53,6 +53,8 @@ public static class Helpers
               --no-same-host         Allow cross-host discovery
               --dry-run              Discover URLs only — skip fetching, summarisation and output
               --llms-full            Also generate llms-full.txt with full page corpus
+              --concurrency <N>      Max parallel fetch/extract operations   [default: 4]
+              --channel-capacity <N>  Pipeline channel buffer size            [default: 20]
               -h, --help             Show this help message and exit
 
             Examples:
@@ -112,6 +114,7 @@ public static class Helpers
         var includeRaw = PromptString("Include URL patterns (comma-separated, blank for none)", "");
         var excludeRaw = PromptString("Exclude URL patterns (comma-separated, blank for none)", "");
         var generateLlmsFullTxt = PromptYesNo("Generate llms-full.txt with full page corpus", false);
+        var maxConcurrency = PromptInt("Max concurrent fetches", 4);
 
         var includePatterns = SplitPatterns(includeRaw);
         var excludePatterns = SplitPatterns(excludeRaw);
@@ -127,7 +130,8 @@ public static class Helpers
             CookieFilePath: cookieFilePath,
             GenerateLlmsFullTxt: generateLlmsFullTxt,
             IncludePatterns: includePatterns,
-            ExcludePatterns: excludePatterns
+            ExcludePatterns: excludePatterns,
+            MaxConcurrency: maxConcurrency
         );
     }
     #endregion

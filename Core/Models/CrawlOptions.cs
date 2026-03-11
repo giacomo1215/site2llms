@@ -24,5 +24,7 @@ public record CrawlOptions(
     bool DryRun = false,
     bool GenerateLlmsFullTxt = false,
     IReadOnlyList<string>? IncludePatterns = null,
-    IReadOnlyList<string>? ExcludePatterns = null
+    IReadOnlyList<string>? ExcludePatterns = null,
+    int MaxConcurrency = 4,
+    int ChannelCapacity = 20
 );

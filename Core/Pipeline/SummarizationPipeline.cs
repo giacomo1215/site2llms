@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using site2llms.Core.Models;
 using site2llms.Core.Services.Discovery;
@@ -21,6 +22,13 @@ public class SummarizationPipeline(
     IManifestStore manifestStore,
     ILogger<SummarizationPipeline> logger)
 {
+    private enum FetchOutcome { Success, FetchFailed, ExtractionSkipped }
+
+    private record FetchResult(
+        DiscoveredUrl Source,
+        PageContent? Extracted,
+        FetchOutcome Outcome);
+
     /// <summary>
     /// Executes one summarization run for the configured root URL.
     /// </summary>
@@ -59,83 +67,142 @@ public class SummarizationPipeline(
         var failed = 0;
         var cached = 0;
 
-        foreach (var item in discovered.Take(options.MaxPages))
-        {
-            ct.ThrowIfCancellationRequested();
-            logger.LogInformation("Processing: {Url}", item.Url);
+        var urlsToProcess = discovered.Take(options.MaxPages).ToList();
 
+        // Channel-based producer-consumer pipeline:
+        // Producer: parallel fetch + extract (I/O-bound)
+        // Consumer: sequential cache check + summarize + write (LLM/GPU-bound)
+        var channel = Channel.CreateBounded<FetchResult>(new BoundedChannelOptions(options.ChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true
+        });
+
+        var producerTask = Task.Run(async () =>
+        {
             try
             {
-                // Step 3: fetch raw page.
-                var fetched = await fetcher.FetchAsync(item.Url, ct);
-                if (fetched is null)
-                {
-                    failed++;
-                    logger.LogWarning("Fetch returned no HTML content for {Url}", item.Url);
-                    await Delay(options, ct);
-                    continue;
-                }
+                await Parallel.ForEachAsync(
+                    urlsToProcess,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = options.MaxConcurrency,
+                        CancellationToken = ct
+                    },
+                    async (item, token) =>
+                    {
+                        logger.LogInformation("Fetching: {Url}", item.Url);
+                        try
+                        {
+                            var fetched = await fetcher.FetchAsync(item.Url, token);
+                            if (fetched is null)
+                            {
+                                logger.LogWarning("Fetch returned no HTML content for {Url}", item.Url);
+                                await channel.Writer.WriteAsync(
+                                    new FetchResult(item, null, FetchOutcome.FetchFailed), token);
+                                return;
+                            }
 
-                // Step 4: extract readable markdown.
-                var extracted = await extractor.ExtractAsync(fetched, ct);
-                if (extracted.IsSkipped)
-                {
-                    skipped++;
-                    logger.LogInformation("Skipped {Url}: {Reason}", item.Url, extracted.SkipReason);
-                    await Delay(options, ct);
-                    continue;
-                }
+                            var extracted = await extractor.ExtractAsync(fetched, token);
+                            if (extracted.IsSkipped)
+                            {
+                                logger.LogInformation("Skipped {Url}: {Reason}", item.Url, extracted.SkipReason);
+                                await channel.Writer.WriteAsync(
+                                    new FetchResult(item, extracted, FetchOutcome.ExtractionSkipped), token);
+                                return;
+                            }
 
-                // Step 5: cache check based on extracted-content hash.
-                var contentHash = Utils.HashUtils.Sha256(extracted.ExtractedMarkdown);
-                if (manifest.Entries.TryGetValue(extracted.Url.AbsoluteUri, out var existing)
-                    && string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(existing.RelativeOutputPath))
-                {
-                    cached++;
-                    skipped++;
-                    logger.LogInformation("Skipped {Url}: unchanged content (cache hit)", item.Url);
+                            await channel.Writer.WriteAsync(
+                                new FetchResult(item, extracted, FetchOutcome.Success), token);
+                        }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed fetching/extracting {Url}", item.Url);
+                            await channel.Writer.WriteAsync(
+                                new FetchResult(item, null, FetchOutcome.FetchFailed), token);
+                        }
 
-                    var fileName = Path.GetFileName(existing.RelativeOutputPath);
-                    indexedPages.Add(new SummaryResult(
-                        Url: extracted.Url,
-                        Title: string.IsNullOrWhiteSpace(existing.Title) ? extracted.Title : existing.Title,
-                        Markdown: string.Empty,
-                        ContentHash: existing.ContentHash,
-                        FileName: fileName,
-                        RelativeOutputPath: existing.RelativeOutputPath.Replace("\\", "/")
-                    ));
-
-                    await Delay(options, ct);
-                    continue;
-                }
-
-                // Step 6: generate summary and write output file.
-                var summary = await summarizer.SummarizeAsync(extracted, ct);
-                var outputPath = await outputWriter.WriteSummaryAsync(rootUrl, summary, extracted.FetchedAt, ct);
-
-                // Step 7: refresh manifest entry with latest metadata.
-                manifest.Entries[extracted.Url.AbsoluteUri] = new ManifestEntry
-                {
-                    Url = extracted.Url.AbsoluteUri,
-                    ContentHash = summary.ContentHash,
-                    RelativeOutputPath = summary.RelativeOutputPath,
-                    LastGeneratedAt = DateTimeOffset.UtcNow.ToString("O"),
-                    Title = summary.Title
-                };
-
-                indexedPages.Add(summary);
-                processed++;
-                logger.LogInformation("Saved: {OutputPath}", outputPath);
+                        await Delay(options, token);
+                    });
             }
-            catch (Exception ex)
+            finally
             {
-                failed++;
-                logger.LogError(ex, "Failed processing {Url}", item.Url);
+                channel.Writer.Complete();
             }
+        });
 
-            await Delay(options, ct);
+        // Consumer: sequential processing (cache check → summarize → write).
+        await foreach (var result in channel.Reader.ReadAllAsync(ct))
+        {
+            switch (result.Outcome)
+            {
+                case FetchOutcome.FetchFailed:
+                    failed++;
+                    break;
+
+                case FetchOutcome.ExtractionSkipped:
+                    skipped++;
+                    break;
+
+                case FetchOutcome.Success:
+                {
+                    var extracted = result.Extracted!;
+                    var contentHash = Utils.HashUtils.Sha256(extracted.ExtractedMarkdown);
+
+                    if (manifest.Entries.TryGetValue(extracted.Url.AbsoluteUri, out var existing)
+                        && string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(existing.RelativeOutputPath))
+                    {
+                        cached++;
+                        skipped++;
+                        logger.LogInformation("Skipped {Url}: unchanged content (cache hit)", extracted.Url);
+
+                        // Load persisted markdown to preserve full content in llms-full.txt.
+                        var cachedMarkdown = await LoadCachedMarkdownAsync(rootUrl, existing.RelativeOutputPath, ct);
+
+                        var fileName = Path.GetFileName(existing.RelativeOutputPath);
+                        indexedPages.Add(new SummaryResult(
+                            Url: extracted.Url,
+                            Title: string.IsNullOrWhiteSpace(existing.Title) ? extracted.Title : existing.Title,
+                            Markdown: cachedMarkdown,
+                            ContentHash: existing.ContentHash,
+                            FileName: fileName,
+                            RelativeOutputPath: existing.RelativeOutputPath.Replace("\\", "/")
+                        ));
+                        break;
+                    }
+
+                    try
+                    {
+                        var summary = await summarizer.SummarizeAsync(extracted, ct);
+                        var outputPath = await outputWriter.WriteSummaryAsync(rootUrl, summary, extracted.FetchedAt, ct);
+
+                        manifest.Entries[extracted.Url.AbsoluteUri] = new ManifestEntry
+                        {
+                            Url = extracted.Url.AbsoluteUri,
+                            ContentHash = summary.ContentHash,
+                            RelativeOutputPath = summary.RelativeOutputPath,
+                            LastGeneratedAt = DateTimeOffset.UtcNow.ToString("O"),
+                            Title = summary.Title
+                        };
+
+                        indexedPages.Add(summary);
+                        processed++;
+                        logger.LogInformation("Saved: {OutputPath}", outputPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        logger.LogError(ex, "Failed processing {Url}", extracted.Url);
+                    }
+                    break;
+                }
+            }
         }
+
+        // Ensure producer completes and propagate any unobserved exceptions.
+        await producerTask;
 
         // Persist updated manifest after all page attempts.
         await manifestStore.SaveAsync(rootUrl, manifest, ct);
@@ -156,6 +223,53 @@ public class SummarizationPipeline(
 
         var outputRoot = Path.Combine("output", site2llms.Core.Utils.UrlUtils.SafeHost(rootUrl));
         return new RunResult(discovered.Count, processed, skipped, failed, cached, outputRoot);
+    }
+
+    /// <summary>
+    /// Reads a cached markdown file and strips YAML frontmatter to return only the body content.
+    /// </summary>
+    private static async Task<string> LoadCachedMarkdownAsync(Uri rootUrl, string relativeOutputPath, CancellationToken ct)
+    {
+        var hostFolder = Utils.UrlUtils.SafeHost(rootUrl);
+        var fullPath = Path.Combine("output", hostFolder, relativeOutputPath);
+
+        if (!File.Exists(fullPath))
+            return string.Empty;
+
+        var content = await File.ReadAllTextAsync(fullPath, ct);
+        return StripFrontmatter(content);
+    }
+
+    /// <summary>
+    /// Removes YAML frontmatter (delimited by --- lines) from a markdown document.
+    /// </summary>
+    private static string StripFrontmatter(string content)
+    {
+        if (!content.TrimStart().StartsWith("---"))
+            return content.Trim();
+
+        var lines = content.Split('\n');
+        var foundOpening = false;
+        var bodyStartLine = 0;
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].TrimEnd('\r').Trim() != "---") continue;
+
+            if (!foundOpening)
+            {
+                foundOpening = true;
+            }
+            else
+            {
+                bodyStartLine = i + 1;
+                break;
+            }
+        }
+
+        return bodyStartLine == 0
+            ? content.Trim()
+            : string.Join('\n', lines.Skip(bodyStartLine)).Trim();
     }
 
     /// <summary>

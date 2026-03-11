@@ -57,9 +57,10 @@ var discovery = new CompositeDiscovery(new IUrlDiscovery[]
 });
 
 // Fetcher with WordPress REST and headless fallback.
+var browserManager = new BrowserManager();
 var fetcher = new HeadlessFallbackPageFetcher(
 	new WordPressRestContentFetcher(new HttpPageFetcher(webHttpClient), wordPressRestClient),
-	new HeadlessPageFetcher(cookieEntries, playwrightSession),
+	new HeadlessPageFetcher(cookieEntries, playwrightSession, browserManager),
 	loggerFactory.CreateLogger<HeadlessFallbackPageFetcher>());
 
 // Heuristic content extractor and Ollama summarizer.
@@ -94,4 +95,5 @@ catch (Exception ex)
 finally
 {
 	if (playwrightSession is not null) await playwrightSession.DisposeAsync();
+	await browserManager.DisposeAsync();
 }

@@ -13,6 +13,8 @@ public static class CliParser
     private const int DefaultMaxPages = 200;
     private const int DefaultMaxDepth = 3;
     private const int DefaultDelayMs = 250;
+    private const int DefaultMaxConcurrency = 4;
+    private const int DefaultChannelCapacity = 20;
 
     /// <summary>
     /// Attempts to parse the supplied command-line arguments.
@@ -49,6 +51,8 @@ public static class CliParser
         bool generateLlmsFullTxt = false;
         var includePatterns = new List<string>();
         var excludePatterns = new List<string>();
+        int maxConcurrency = DefaultMaxConcurrency;
+        int channelCapacity = DefaultChannelCapacity;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -108,6 +112,14 @@ public static class CliParser
                     excludePatterns.Add(NextValue(args, ref i, arg));
                     break;
 
+                case "--concurrency":
+                    maxConcurrency = NextInt(args, ref i, arg);
+                    break;
+
+                case "--channel-capacity":
+                    channelCapacity = NextInt(args, ref i, arg);
+                    break;
+
                 default:
                     Error($"Unknown argument: {arg}");
                     break;
@@ -139,7 +151,9 @@ public static class CliParser
             DryRun: dryRun,
             GenerateLlmsFullTxt: generateLlmsFullTxt,
             IncludePatterns: includePatterns,
-            ExcludePatterns: excludePatterns
+            ExcludePatterns: excludePatterns,
+            MaxConcurrency: maxConcurrency,
+            ChannelCapacity: channelCapacity
         );
 
         return CliParseResult.Parsed;

@@ -12,7 +12,8 @@ namespace site2llms.Core.Services.Fetching;
 /// </summary>
 public class HeadlessPageFetcher(
     IReadOnlyList<CookieEntry>? cookies = null,
-    PlaywrightSession? session = null) : IPageFetcher
+    PlaywrightSession? session = null,
+    IBrowserManager? browserManager = null) : IPageFetcher
 {
     public async Task<PageContent?> FetchAsync(Uri url, CancellationToken ct = default)
     {
@@ -57,21 +58,32 @@ public class HeadlessPageFetcher(
 
     private async Task<PageContent?> FetchStandaloneAsync(Uri url, CancellationToken ct)
     {
+        IPlaywright? ownedPlaywright = null;
+        IBrowser? ownedBrowser = null;
         try
         {
-            using var playwright = await Playwright.CreateAsync();
-            await using var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            IBrowser browser;
+            if (browserManager is not null)
             {
-                Headless = true,
-                Args = new[]
+                browser = await browserManager.GetBrowserAsync();
+            }
+            else
+            {
+                ownedPlaywright = await Playwright.CreateAsync();
+                ownedBrowser = await ownedPlaywright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
                 {
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-infobars",
-                    "--window-size=1920,1080"
-                }
-            });
+                    Headless = true,
+                    Args = new[]
+                    {
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-infobars",
+                        "--window-size=1920,1080"
+                    }
+                });
+                browser = ownedBrowser;
+            }
 
             await using var context = await browser.NewContextAsync(new BrowserNewContextOptions
             {
@@ -114,54 +126,66 @@ public class HeadlessPageFetcher(
             }
 
             var page = await context.NewPageAsync();
-            await page.GotoAsync(url.AbsoluteUri, new PageGotoOptions
+            try
             {
-                WaitUntil = WaitUntilState.NetworkIdle,
-                Timeout = 45000
-            });
-
-            // Wait for challenge resolution if one is detected.
-            await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded, new PageWaitForLoadStateOptions
-            {
-                Timeout = 10000
-            });
-
-            var html = await page.ContentAsync();
-            var challengeLabel = ChallengeDetector.Detect(html);
-            if (challengeLabel is not null)
-            {
-                try
+                await page.GotoAsync(url.AbsoluteUri, new PageGotoOptions
                 {
-                    await page.WaitForURLAsync(u => u != page.Url, new PageWaitForURLOptions { Timeout = 15_000 });
-                    await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 10_000 });
-                }
-                catch (TimeoutException)
+                    WaitUntil = WaitUntilState.NetworkIdle,
+                    Timeout = 45000
+                });
+
+                // Wait for challenge resolution if one is detected.
+                await page.WaitForLoadStateAsync(LoadState.DOMContentLoaded, new PageWaitForLoadStateOptions
                 {
-                    await Task.Delay(3_000, ct);
+                    Timeout = 10000
+                });
+
+                var html = await page.ContentAsync();
+                var challengeLabel = ChallengeDetector.Detect(html);
+                if (challengeLabel is not null)
+                {
+                    try
+                    {
+                        await page.WaitForURLAsync(u => u != page.Url, new PageWaitForURLOptions { Timeout = 15_000 });
+                        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new PageWaitForLoadStateOptions { Timeout = 10_000 });
+                    }
+                    catch (TimeoutException)
+                    {
+                        await Task.Delay(3_000, ct);
+                    }
+
+                    html = await page.ContentAsync();
                 }
 
-                html = await page.ContentAsync();
-            }
+                if (string.IsNullOrWhiteSpace(html))
+                {
+                    return null;
+                }
 
-            if (string.IsNullOrWhiteSpace(html))
+                var title = await page.TitleAsync();
+                return new PageContent(
+                    Url: url,
+                    Title: string.IsNullOrWhiteSpace(title) ? url.AbsolutePath.Trim('/').Replace('-', ' ') : title,
+                    ExtractedMarkdown: string.Empty,
+                    RawHtml: html,
+                    FetchedAt: DateTimeOffset.UtcNow,
+                    IsSkipped: false,
+                    SkipReason: null
+                );
+            }
+            finally
             {
-                return null;
+                await page.CloseAsync();
             }
-
-            var title = await page.TitleAsync();
-            return new PageContent(
-                Url: url,
-                Title: string.IsNullOrWhiteSpace(title) ? url.AbsolutePath.Trim('/').Replace('-', ' ') : title,
-                ExtractedMarkdown: string.Empty,
-                RawHtml: html,
-                FetchedAt: DateTimeOffset.UtcNow,
-                IsSkipped: false,
-                SkipReason: null
-            );
         }
         catch (PlaywrightException)
         {
             return null;
+        }
+        finally
+        {
+            if (ownedBrowser is not null) await ownedBrowser.CloseAsync();
+            ownedPlaywright?.Dispose();
         }
     }
 

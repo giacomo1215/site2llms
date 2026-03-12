@@ -133,6 +133,7 @@ public class SummarizationPipeline(
         });
 
         // Consumer: sequential processing (cache check → summarize → write).
+        var consumed = 0;
         await foreach (var result in channel.Reader.ReadAllAsync(ct))
         {
             switch (result.Outcome)
@@ -198,6 +199,14 @@ public class SummarizationPipeline(
                     }
                     break;
                 }
+            }
+
+            // Periodic manifest checkpoint to avoid losing all progress on crash.
+            consumed++;
+            if (consumed % 10 == 0)
+            {
+                await manifestStore.SaveAsync(rootUrl, manifest, ct);
+                logger.LogDebug("Manifest checkpoint saved ({Count} items consumed)", consumed);
             }
         }
 

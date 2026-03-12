@@ -40,8 +40,14 @@ public class ManifestStore : IManifestStore
         var path = GetManifestPath(rootUrl);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
-        await using var stream = File.Create(path);
-        await JsonSerializer.SerializeAsync(stream, manifest, JsonOptions, ct);
+        var tempPath = path + ".tmp";
+
+        await using (var stream = File.Create(tempPath))
+        {
+            await JsonSerializer.SerializeAsync(stream, manifest, JsonOptions, ct);
+        }
+
+        File.Move(tempPath, path, overwrite: true);
     }
 
     /// <summary>

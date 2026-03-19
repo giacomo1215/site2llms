@@ -24,37 +24,24 @@ Helpers.Greet();
 
 // Resolve options: CLI arguments first, interactive prompts as fallback.
 var options = Helpers.ResolveOptions(args);
-if (options is null)
-{
-    // --help was shown; nothing more to do.
-    return;
-}
+if (options is null) return;
 
 // Cookie loading
-var cookieLogger = loggerFactory.CreateLogger("Cookies");
-var cookieContainer = CookieLoader.Load(options.CookieFilePath, cookieLogger);
-var cookieEntries = CookieLoader.LoadAsList(options.CookieFilePath, cookieLogger);
+var cookieLogger 			= loggerFactory.CreateLogger("Cookies");
+var cookieContainer 		= CookieLoader.Load(options.CookieFilePath, cookieLogger);
+var cookieEntries 			= CookieLoader.LoadAsList(options.CookieFilePath, cookieLogger);
 
 // HTTP clients
-using var webHttpClient = Helpers.BuildHttpClient(cookieContainer);
-using var ollamaHttpClient = Helpers.BuildHttpClient();
+using var webHttpClient 	= Helpers.BuildHttpClient(cookieContainer);
+using var ollamaHttpClient  = Helpers.BuildHttpClient();
 
 // WordPress REST client
-var wpLogger = loggerFactory.CreateLogger<WordPressRestClient>();
-var wordPressRestClient = new WordPressRestClient(webHttpClient, wpLogger);
+var wpLogger 				= loggerFactory.CreateLogger<WordPressRestClient>();
+var wordPressRestClient 	= new WordPressRestClient(webHttpClient, wpLogger);
 
 // Site protection probe
-var playwrightSession = await Helpers.ProbeSiteProtectionAsync(
+var playwrightSession 		= await Helpers.ProbeSiteProtectionAsync(
 	webHttpClient, options.RootUrl, cookieEntries, wordPressRestClient, loggerFactory);
-
-// Compose pipeline services
-var discovery = new CompositeDiscovery(new IUrlDiscovery[]
-{
-	new WordPressRestDiscovery(wordPressRestClient, loggerFactory.CreateLogger<WordPressRestDiscovery>()),
-	new SitemapDiscovery(webHttpClient),
-	new RssDiscovery(webHttpClient),
-	new CrawlDiscovery(webHttpClient)
-});
 
 // Fetcher with WordPress REST and headless fallback.
 var browserManager = new BrowserManager();
@@ -63,11 +50,20 @@ var fetcher = new HeadlessFallbackPageFetcher(
 	new HeadlessPageFetcher(cookieEntries, playwrightSession, browserManager),
 	loggerFactory.CreateLogger<HeadlessFallbackPageFetcher>());
 
+// Compose pipeline services
+var discovery = new CompositeDiscovery(new IUrlDiscovery[]
+{
+	new WordPressRestDiscovery(wordPressRestClient, loggerFactory.CreateLogger<WordPressRestDiscovery>()),
+	new SitemapDiscovery(webHttpClient, loggerFactory.CreateLogger<SitemapDiscovery>(), playwrightSession),
+	new RssDiscovery(webHttpClient, loggerFactory.CreateLogger<RssDiscovery>()),
+	new CrawlDiscovery(fetcher)
+});
+
 // Heuristic content extractor and Ollama summarizer.
-var extractor = new HeuristicContentExtractor();
-var summarizer = new OllamaSummarizer(ollamaHttpClient, options.OllamaBaseUrl, options.OllamaModel);
-var outputWriter = new FileOutputWriter(new LlmsTxtBuilder());
-var manifestStore = new ManifestStore();
+var extractor 		= new HeuristicContentExtractor();
+var summarizer 		= new OllamaSummarizer(ollamaHttpClient, options.OllamaBaseUrl, options.OllamaModel);
+var outputWriter 	= new FileOutputWriter(new LlmsTxtBuilder());
+var manifestStore 	= new ManifestStore();
 
 // Pipeline composition
 var pipeline = new SummarizationPipeline(

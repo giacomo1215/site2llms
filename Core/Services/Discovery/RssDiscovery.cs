@@ -1,5 +1,6 @@
 using System.ServiceModel.Syndication;
 using System.Xml;
+using Microsoft.Extensions.Logging;
 using site2llms.Core.Models;
 using site2llms.Core.Utils;
 
@@ -8,8 +9,10 @@ namespace site2llms.Core.Services.Discovery;
 /// <summary>
 /// Discovers URLs from common RSS/Atom feed endpoints.
 /// </summary>
-public class RssDiscovery(HttpClient http) : IUrlDiscovery
+public class RssDiscovery(HttpClient http, ILogger<RssDiscovery> logger) : IUrlDiscovery
 {
+    private readonly ILogger<RssDiscovery> _logger = logger;
+
     /// <summary>
     /// Attempts RSS discovery using known feed paths and returns feed item links.
     /// </summary>
@@ -48,7 +51,10 @@ public class RssDiscovery(HttpClient http) : IUrlDiscovery
                 if (urls.Count > 0) return urls;
             }
             // Feed endpoint may not exist or may be malformed; continue to next candidate.
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "RSS discovery failed for {FeedUrl}", c);
+            }
         }
 
         return Array.Empty<DiscoveredUrl>();

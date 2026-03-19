@@ -1,4 +1,6 @@
+using System.Net;
 using System.Xml.Linq;
+using Microsoft.Extensions.Logging;
 using site2llms.Core.Models;
 using site2llms.Core.Utils;
 
@@ -8,14 +10,17 @@ namespace site2llms.Core.Services.Discovery;
 /// Discovers URLs from common sitemap endpoints.
 /// Supports both <c>sitemapindex</c> and <c>urlset</c> documents.
 /// </summary>
-public class SitemapDiscovery(HttpClient http) : IUrlDiscovery
+public class SitemapDiscovery(HttpClient http, ILogger<SitemapDiscovery> logger, PlaywrightSession? session = null) : IUrlDiscovery
 {
+    private readonly ILogger<SitemapDiscovery> _logger = logger;
+
     /// <summary>
     /// Attempts sitemap discovery using well-known sitemap paths.
     /// </summary>
     public async Task<IReadOnlyList<DiscoveredUrl>> DiscoverAsync(CrawlOptions options, CancellationToken ct = default)
     {
         var root = new Uri(options.RootUrl);
+        var useBrowserForSitemaps = false;
         var candidates = new[]
         {
             new Uri(root, "/sitemap.xml"),
@@ -27,8 +32,16 @@ public class SitemapDiscovery(HttpClient http) : IUrlDiscovery
         {
             try
             {
-                // Parse sitemap XML from candidate endpoint.
-                var xml = await http.GetStringAsync(sm, ct);
+                var result = await LoadSitemapXmlAsync(sm, useBrowserForSitemaps, ct);
+                if (result.Blocked && !useBrowserForSitemaps && session is not null)
+                {
+                    useBrowserForSitemaps = true;
+                    result = await LoadSitemapXmlAsync(sm, true, ct);
+                }
+
+                var xml = result.Xml;
+                if (string.IsNullOrWhiteSpace(xml)) continue;
+
                 var doc = XDocument.Parse(xml);
 
                 // If this is a sitemap index, recurse into each sub-sitemap.
@@ -43,7 +56,7 @@ public class SitemapDiscovery(HttpClient http) : IUrlDiscovery
                     var all = new List<DiscoveredUrl>();
                     foreach (var sub in subs)
                     {
-                        all.AddRange(await ReadUrlset(sub, root, options, ct));
+                        all.AddRange(await ReadUrlset(sub, root, options, useBrowserForSitemaps, ct));
                     }
 
                     // Return bounded, de-duplicated URL list.
@@ -67,7 +80,10 @@ public class SitemapDiscovery(HttpClient http) : IUrlDiscovery
                 if (urls.Count > 0) return urls;
             }
             // Any malformed/missing sitemap should not stop fallback strategies.
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Sitemap discovery failed for {SitemapUrl}", sm);
+            }
         }
 
         return Array.Empty<DiscoveredUrl>();
@@ -76,11 +92,16 @@ public class SitemapDiscovery(HttpClient http) : IUrlDiscovery
     /// <summary>
     /// Reads one urlset sitemap and returns discovered URLs.
     /// </summary>
-    private async Task<List<DiscoveredUrl>> ReadUrlset(Uri sitemapUrl, Uri root, CrawlOptions options, CancellationToken ct)
+    private async Task<List<DiscoveredUrl>> ReadUrlset(Uri sitemapUrl, Uri root, CrawlOptions options, bool useBrowserForSitemaps, CancellationToken ct)
     {
         try
         {
-            var xml = await http.GetStringAsync(sitemapUrl, ct);
+            var xml = (await LoadSitemapXmlAsync(sitemapUrl, useBrowserForSitemaps, ct)).Xml;
+            if (string.IsNullOrWhiteSpace(xml))
+            {
+                return [];
+            }
+
             var doc = XDocument.Parse(xml);
 
             return doc.Descendants().Where(x => x.Name.LocalName == "url")
@@ -93,6 +114,49 @@ public class SitemapDiscovery(HttpClient http) : IUrlDiscovery
         }
         // Keep sitemap ingestion resilient: one bad sub-sitemap should not fail the whole set.
         catch { return []; }
+    }
+
+    /// <summary>
+    /// Loads sitemap XML via HTTP first, then falls back to Playwright when the site blocks plain requests.
+    /// </summary>
+    private async Task<(string? Xml, bool Blocked)> LoadSitemapXmlAsync(Uri sitemapUrl, bool forceBrowser, CancellationToken ct)
+    {
+        if (!forceBrowser)
+        {
+            using var response = await http.GetAsync(sitemapUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return (await response.Content.ReadAsStringAsync(ct), false);
+            }
+
+            if (!IsBlocked(response.StatusCode) || session is null)
+            {
+                return (null, false);
+            }
+
+            _logger.LogInformation("Sitemap blocked with HTTP {StatusCode}; switching remaining sitemap requests to Playwright", (int)response.StatusCode);
+        }
+
+        if (session is null)
+        {
+            return (null, forceBrowser);
+        }
+
+        var pwResponse = await session.GetAsync(sitemapUrl.AbsoluteUri, ct);
+        if (pwResponse is null || !pwResponse.IsSuccess || string.IsNullOrWhiteSpace(pwResponse.Body))
+        {
+            return (null, forceBrowser);
+        }
+
+        return (pwResponse.Body, false);
+    }
+
+    private static bool IsBlocked(HttpStatusCode statusCode)
+    {
+        return statusCode is HttpStatusCode.Forbidden
+            or HttpStatusCode.Unauthorized
+            or HttpStatusCode.ServiceUnavailable;
     }
 
     /// <summary>

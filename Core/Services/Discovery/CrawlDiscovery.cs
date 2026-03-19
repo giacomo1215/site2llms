@@ -2,13 +2,18 @@ using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
 using site2llms.Core.Models;
 using site2llms.Core.Utils;
+using site2llms.Core.Services.Fetching;
+using Microsoft.Playwright;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace site2llms.Core.Services.Discovery;
 
 /// <summary>
 /// Breadth-first in-site crawler used as fallback discovery strategy.
 /// </summary>
-public class CrawlDiscovery(HttpClient http) : IUrlDiscovery
+//public class CrawlDiscovery(HttpClient http) : IUrlDiscovery
+public class CrawlDiscovery(IPageFetcher fetcher) : IUrlDiscovery
 {
     /// <summary>
     /// Crawls links starting from the root URL, bounded by max depth and max pages.
@@ -46,8 +51,10 @@ public class CrawlDiscovery(HttpClient http) : IUrlDiscovery
 
             try
             {
-                var html = await http.GetStringAsync(cur.Url, ct);
-                var doc = await parser.ParseDocumentAsync(html, ct);
+                // var html = await http.GetStringAsync(cur.Url, ct);
+                var page = await fetcher.FetchAsync(cur.Url, ct);
+                var html = page?.RawHtml ?? string.Empty;
+                var doc  = await parser.ParseDocumentAsync(html, ct);
 
                 // Extract, normalize, and filter links from this page.
                 var links = doc.QuerySelectorAll("a[href]")
@@ -69,7 +76,8 @@ public class CrawlDiscovery(HttpClient http) : IUrlDiscovery
                 }
             }
             // Any crawl page can fail independently without aborting full discovery.
-            catch { }
+            catch
+            { }
 
             if (options.DelayMs > 0) await Task.Delay(options.DelayMs, ct);
         }

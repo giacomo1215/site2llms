@@ -155,23 +155,32 @@ public class SummarizationPipeline(
                         && string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase)
                         && !string.IsNullOrWhiteSpace(existing.RelativeOutputPath))
                     {
-                        cached++;
-                        skipped++;
-                        logger.LogInformation("Skipped {Url}: unchanged content (cache hit)", extracted.Url);
-
                         // Load persisted markdown to preserve full content in llms-full.txt.
                         var cachedMarkdown = await LoadCachedMarkdownAsync(rootUrl, existing.RelativeOutputPath, ct);
 
-                        var fileName = Path.GetFileName(existing.RelativeOutputPath);
-                        indexedPages.Add(new SummaryResult(
-                            Url: extracted.Url,
-                            Title: string.IsNullOrWhiteSpace(existing.Title) ? extracted.Title : existing.Title,
-                            Markdown: cachedMarkdown,
-                            ContentHash: existing.ContentHash,
-                            FileName: fileName,
-                            RelativeOutputPath: existing.RelativeOutputPath.Replace("\\", "/")
-                        ));
-                        break;
+                        // Cache file was deleted - regenerate instead of using empty content.
+                        if (string.IsNullOrEmpty(cachedMarkdown))
+                        {
+                            logger.LogInformation("Cache file missing for {Url} - regenerating", extracted.Url);
+                            manifest.Entries.Remove(extracted.Url.AbsoluteUri);
+                        }
+                        else
+                        {
+                            cached++;
+                            skipped++;
+                            logger.LogInformation("Skipped {Url}: unchanged content (cache hit)", extracted.Url);
+
+                            var fileName = Path.GetFileName(existing.RelativeOutputPath);
+                            indexedPages.Add(new SummaryResult(
+                                Url: extracted.Url,
+                                Title: string.IsNullOrWhiteSpace(existing.Title) ? extracted.Title : existing.Title,
+                                Markdown: cachedMarkdown,
+                                ContentHash: existing.ContentHash,
+                                FileName: fileName,
+                                RelativeOutputPath: existing.RelativeOutputPath.Replace("\\", "/")
+                            ));
+                            break;
+                        }
                     }
 
                     try

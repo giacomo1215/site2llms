@@ -53,7 +53,6 @@ public class FileOutputWriter : IOutputWriter
     /// <param name="rootUrl">url of root page, used to determine output folder</param>
     /// <param name="pages">list of pages to include in the index</param>
     /// <param name="ct">cancellation token</param>
-    /// <returns></returns>
     public async Task WriteLlmsFullTxtAsync(Uri rootUrl, IReadOnlyList<SummaryResult> pages, CancellationToken ct = default)
     {
         var hostFolder = UrlUtils.SafeHost(rootUrl);
@@ -94,7 +93,10 @@ public class FileOutputWriter : IOutputWriter
             sb.AppendLine();
         }
 
-        await File.WriteAllTextAsync(llmsFullTxtPath, sb.ToString(), Encoding.UTF8, ct);
+        // Atomic write: write to temp file, then move (prevents corruption on crash/power loss)
+        var tempPath = llmsFullTxtPath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, sb.ToString(), Encoding.UTF8, ct);
+        File.Move(tempPath, llmsFullTxtPath, overwrite: true);
     }
 
     /// <summary>
@@ -108,7 +110,11 @@ public class FileOutputWriter : IOutputWriter
 
         var llmsTxtPath = Path.Combine(hostDir, "llms.txt");
         var content = _llmsTxtBuilder.Build(rootUrl, pages);
-        await File.WriteAllTextAsync(llmsTxtPath, content, Encoding.UTF8, ct);
+
+        // Atomic write: write to temp file, then move (prevents corruption on crash/power loss)
+        var tempPath = llmsTxtPath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, content, Encoding.UTF8, ct);
+        File.Move(tempPath, llmsTxtPath, overwrite: true);
     }
 
     /// <summary>

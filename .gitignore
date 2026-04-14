@@ -18,3 +18,5 @@ output/*
 *.sdf
 output/vsvcarriers.com/llms.txt
 output/vsvcarriers.com/manifest.json
+CLAUDE.md
+.gitignore
